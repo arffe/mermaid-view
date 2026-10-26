@@ -19,6 +19,13 @@
      title on one line and widens the subgraph to fit. */
   .cluster-label foreignObject > div { max-width: none !important; }
   html.dragging #stage { cursor: grabbing; }
+  /* Top-left label: same text as the mermaid-pick menu row. */
+  #info { position: fixed; top: 12px; left: 16px; z-index: 1; pointer-events: none;
+          padding: 6px 10px; border-radius: 6px; font: 13px var(--font, monospace);
+          background: color-mix(in srgb, var(--bg) 85%, transparent); }
+  #info:empty { display: none; }
+  #info .detail { opacity: 0.6; font-size: 11px; margin-top: 2px; }
+  html.export #info { display: none; }
   #err { display: none; padding: 24px; height: 100%; box-sizing: border-box; overflow: auto; user-select: text; }
   #err h2 { color: var(--red); margin-top: 0; }
   #err pre { white-space: pre-wrap; font: 13px monospace; }
@@ -31,11 +38,13 @@
 <script src="vendor/mermaid.min.js"></script>
 </head>
 <body>
+<div id="info"></div>
 <div id="stage"></div>
 <div id="err"></div>
 <script>
   const stage = document.getElementById('stage');
   const err = document.getElementById('err');
+  const info = document.getElementById('info');
   const post = (msg) => window.webkit.messageHandlers.mv.postMessage(JSON.stringify(msg));
 
   let svg = null, natW = 0, natH = 0;   // diagram's natural size, in CSS px
@@ -87,12 +96,20 @@
           actorTextColor: fg,
           signalColor: fg,
           signalTextColor: fg,
+          // Setting xyChart replaces all of Mermaid's chart colours, not
+          // just the palette, so every one is given here.
+          xyChart: {
+            backgroundColor: bg, titleColor: fg, plotColorPalette: accents.join(','),
+            xAxisLabelColor: fg, xAxisTitleColor: fg, xAxisTickColor: fg, xAxisLineColor: fg,
+            yAxisLabelColor: fg, yAxisTitleColor: fg, yAxisTickColor: fg, yAxisLineColor: fg,
+          },
           ...scale,
         },
       });
       const root = document.documentElement.style;
       root.setProperty('--bg', bg);
       root.setProperty('--fg', fg);
+      root.setProperty('--font', font);
       root.setProperty('--dot', (c.muted || fg) + '55');
       if (c.red) root.setProperty('--red', c.red);
     }
@@ -150,7 +167,7 @@
   function showError(e, src) {
     // A failed render can leave Mermaid's scratch element in the body.
     for (const el of [...document.body.children])
-      if (el !== stage && el !== err && el.tagName !== 'SCRIPT') el.remove();
+      if (el !== stage && el !== err && el !== info && el.tagName !== 'SCRIPT') el.remove();
     err.style.display = 'block';
     const h = document.createElement('h2');
     h.textContent = "Mermaid couldn't draw this";
@@ -162,9 +179,24 @@
     err.replaceChildren(h, msg, code);
   }
 
+  function showInfo(about) {
+    if (!about) return info.replaceChildren();
+    const label = document.createElement('div');
+    label.textContent = about.label;
+    const detail = document.createElement('div');
+    detail.className = 'detail';
+    detail.textContent = [about.detail, about.pos].filter(Boolean).join('  ·  ');
+    info.replaceChildren(label, ...(detail.textContent ? [detail] : []));
+  }
+
   // Called from Python once the page has loaded.
-  async function showDiagram(src, theme) {
+  // Also called again when stepping to another diagram with the arrow keys.
+  async function showDiagram(src, theme, about) {
     applyTheme(theme);
+    showInfo(about);
+    svg = null;
+    stage.replaceChildren();
+    err.style.display = 'none';
     try {
       const { svg: markup } = await mermaid.render('mv' + Date.now(), src);
       stage.innerHTML = markup;
@@ -252,6 +284,9 @@
     if (e.ctrlKey || e.altKey || e.metaKey) return;
     const k = e.key.toLowerCase();
     if (k === 'escape' || k === 'q') return post({ cmd: 'close' });
+    // Previous/next diagram in the folder (Python ignores this for the clipboard).
+    if (k === 'arrowleft') return post({ cmd: 'step', dir: -1 });
+    if (k === 'arrowright') return post({ cmd: 'step', dir: 1 });
     if (!svg) return;
     const cx = innerWidth / 2, cy = innerHeight / 2;
     if (k === '+' || k === '=') zoomAt(1.25, cx, cy);

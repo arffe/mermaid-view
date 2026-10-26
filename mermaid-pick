@@ -7,7 +7,7 @@ set -euo pipefail
 history="$HOME/.cache/mermaid-view/history"
 viewer="$(dirname "$(readlink -f "$0")")/mermaid-view"
 
-mapfile -t files < <(ls -1r "$history"/*.mmd 2>/dev/null | head -50)
+mapfile -t files < <(ls -1 "$history"/*.mmd 2>/dev/null | sort -rV | head -50)
 if (( ${#files[@]} == 0 )); then
   notify-send -u low "Mermaid viewer" "No diagrams captured from Claude Code yet"
   exit 0
@@ -21,7 +21,7 @@ for file in "${files[@]}"; do
   when="${name:6:2}/${name:4:2} ${name:9:2}:${name:11:2}"
   label=$(grep -m1 -oP '^\s*title:?\s+\K.+' "$file" ||
           grep -m1 -vE '^\s*($|%%|---)' "$file" || true)
-  label=$(sed -E 's/^\s+//' <<<"${label:0:70}")
+  label=$(sed -E 's/^\s+//; s/^"(.*)"$/\1/' <<<"${label:0:70}")
   # Three tab-separated parts (icon, label, subtext): with only two the menu
   # reads the first as the icon. The icon is left empty.
   options+=($'\t'"$when  $label"$'\t'"$name")

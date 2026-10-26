@@ -4,7 +4,8 @@
 Usage: mermaid-view [FILE]     (no FILE = read the Wayland clipboard)
 
 Drag to pan, scroll to zoom, 0 = fit, 1 = actual size, S = save SVG,
-P = save PNG (to ~/Pictures/mermaid/), Q or Esc = close.
+P = save PNG (to ~/Pictures/mermaid/), Q or Esc = close. When showing a
+file, Left/Right step to the previous/next diagram in its folder.
 """
 import json
 import re
@@ -88,11 +89,31 @@ def omarchy_theme():
     return {"colors": colors, "font": font}
 
 
-def title_for(source):
-    """A short window title: the diagram's own title if it has one."""
+def label_for(source):
+    """The diagram's own title, else its first real line (as mermaid-pick)."""
     match = re.search(r"^\s*title:?\s+(.+)$", source, re.M)
-    line = match.group(1) if match else source.splitlines()[0]
-    return f"Mermaid — {line.strip()[:60]}"
+    if match:
+        return match.group(1).strip().strip('"')[:70]
+    lines = [line.strip() for line in source.splitlines()]
+    return next((line for line in lines if line and not line.startswith(("%%", "---"))), "")[:70]
+
+
+def when_for(path):
+    """Capture time from a history file name (YYYYMMDD-HHMMSS-n), else the
+    file's modification time."""
+    stamp = re.match(r"(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})", path.name)
+    if stamp:
+        _, month, day, hour, minute = stamp.groups()
+        return f"{day}/{month} {hour}:{minute}"
+    return time.strftime("%d/%m %H:%M", time.localtime(path.stat().st_mtime))
+
+
+def siblings(path):
+    """Files like this one in its folder, oldest first (history names sort by
+    time). Numbers compare as numbers, so "-2" comes before "-10"."""
+    def natural(p):
+        return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", p.name)]
+    return sorted(path.parent.glob(f"*{path.suffix}"), key=natural)
 
 
 def save_path(ext):
@@ -101,10 +122,11 @@ def save_path(ext):
 
 
 class Viewer(Gtk.ApplicationWindow):
-    def __init__(self, app, source):
-        super().__init__(application=app, title=title_for(source))
+    def __init__(self, app, source, path=None):
+        super().__init__(application=app)
         self.set_default_size(1400, 900)
         self.source = source
+        self.path = path  # None when showing the clipboard
         self.theme = omarchy_theme()
 
         content = WebKit.UserContentManager()
@@ -125,14 +147,48 @@ class Viewer(Gtk.ApplicationWindow):
 
     def on_load(self, view, event):
         if event == WebKit.LoadEvent.FINISHED:
-            # json.dumps makes the source a safe JavaScript string literal.
-            self.run_js(f"showDiagram({json.dumps(self.source)}, {json.dumps(self.theme)})")
+            self.show()
             view.grab_focus()
+
+    def show(self):
+        """Draw self.source, with the info label for the top-left corner."""
+        label = label_for(self.source)
+        if self.path:
+            files = siblings(self.path)
+            where = files.index(self.path) + 1 if self.path in files else 0
+            info = {"label": f"{when_for(self.path)}  {label}", "detail": self.path.name,
+                    "pos": f"{where} of {len(files)}" if where else ""}
+        else:
+            info = {"label": f"Clipboard  {label}", "detail": "", "pos": ""}
+        self.set_title(f"Mermaid — {label[:60]}")
+        # json.dumps makes each value a safe JavaScript literal.
+        self.run_js(f"showDiagram({json.dumps(self.source)}, {json.dumps(self.theme)},"
+                    f" {json.dumps(info)})")
+
+    def step(self, direction):
+        """Move to the previous (-1) or next (+1) diagram in the same folder,
+        skipping files with no Mermaid in them. Stops at either end."""
+        if not self.path:
+            return
+        files = siblings(self.path)
+        i = files.index(self.path) if self.path in files else -1
+        while 0 <= i + direction < len(files):
+            i += direction
+            try:
+                source = extract(files[i].read_text())
+            except OSError:
+                continue
+            if source:
+                self.path, self.source = files[i], source
+                self.show()
+                return
 
     def on_message(self, _content, value):
         msg = json.loads(value.to_string())
         if msg["cmd"] == "close":
             self.close()
+        elif msg["cmd"] == "step":
+            self.step(msg["dir"])
         elif msg["cmd"] == "svg":
             path = save_path("svg")
             path.write_text(msg["data"])
@@ -165,9 +221,11 @@ class Viewer(Gtk.ApplicationWindow):
 
 def main():
     if len(sys.argv) > 1:
-        text = Path(sys.argv[1]).read_text()
-        where = Path(sys.argv[1]).name
+        path = Path(sys.argv[1]).resolve()
+        text = path.read_text()
+        where = path.name
     else:
+        path = None
         text = read_clipboard()
         where = "the clipboard"
 
@@ -178,7 +236,7 @@ def main():
 
     GLib.set_prgname("mermaid-view")  # Wayland app-id, matched by the Hyprland rule
     app = Gtk.Application(flags=Gio.ApplicationFlags.NON_UNIQUE)
-    app.connect("activate", lambda a: Viewer(a, source).present())
+    app.connect("activate", lambda a: Viewer(a, source, path).present())
     return app.run([])
 
 
