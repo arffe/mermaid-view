@@ -1,0 +1,180 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Mermaid</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1e1e1e; color: #ddd;
+               font: 14px system-ui, sans-serif; user-select: none; }
+  #stage { position: absolute; left: 0; top: 0; cursor: grab; }
+  #stage svg { display: block; max-width: none !important; }
+  html.dragging #stage { cursor: grabbing; }
+  #err { display: none; padding: 24px; height: 100%; box-sizing: border-box; overflow: auto; user-select: text; }
+  #err h2 { color: #f38ba8; margin-top: 0; }
+  #err pre { white-space: pre-wrap; font: 13px monospace; }
+  #err pre.src { color: #999; border-top: 1px solid #444; padding-top: 12px; }
+  /* PNG export: let the page grow to the diagram's size so a full-document
+     snapshot captures all of it, pinned at the top-left corner. */
+  html.export, html.export body { height: auto; overflow: visible; }
+  html.export #stage { position: static; display: inline-block; padding: 24px; }
+</style>
+<script src="vendor/mermaid.min.js"></script>
+</head>
+<body>
+<div id="stage"></div>
+<div id="err"></div>
+<script>
+  const stage = document.getElementById('stage');
+  const err = document.getElementById('err');
+  const post = (msg) => window.webkit.messageHandlers.mv.postMessage(JSON.stringify(msg));
+
+  let svg = null, natW = 0, natH = 0;   // diagram's natural size, in CSS px
+  let scale = 1, tx = 0, ty = 0;        // current zoom and pan offset
+  let moved = false;                    // has the user zoomed/panned yet?
+
+  mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict' });
+
+  // Zoom by resizing the SVG itself rather than a CSS transform, so the
+  // browser redraws the vector shapes and text stays sharp at any size.
+  function apply() {
+    svg.style.width = natW * scale + 'px';
+    svg.style.height = natH * scale + 'px';
+    stage.style.left = tx + 'px';
+    stage.style.top = ty + 'px';
+  }
+
+  function fit() {
+    const pad = 32, W = innerWidth, H = innerHeight;
+    scale = Math.min((W - 2 * pad) / natW, (H - 2 * pad) / natH, 2);
+    tx = (W - natW * scale) / 2;
+    ty = (H - natH * scale) / 2;
+    moved = false;
+    apply();
+  }
+
+  function actualSize() {
+    zoomAt(1 / scale, innerWidth / 2, innerHeight / 2);
+  }
+
+  // Zoom around a point (cx, cy) so whatever is under it stays put.
+  function zoomAt(factor, cx, cy) {
+    const next = Math.min(40, Math.max(0.05, scale * factor));
+    factor = next / scale;
+    tx = cx - (cx - tx) * factor;
+    ty = cy - (cy - ty) * factor;
+    scale = next;
+    moved = true;
+    apply();
+  }
+
+  function showError(e, src) {
+    // A failed render can leave Mermaid's scratch element in the body.
+    for (const el of [...document.body.children])
+      if (el !== stage && el !== err && el.tagName !== 'SCRIPT') el.remove();
+    err.style.display = 'block';
+    const h = document.createElement('h2');
+    h.textContent = "Mermaid couldn't draw this";
+    const msg = document.createElement('pre');
+    msg.textContent = String((e && e.message) || e);
+    const code = document.createElement('pre');
+    code.className = 'src';
+    code.textContent = src;
+    err.replaceChildren(h, msg, code);
+  }
+
+  // Called from Python once the page has loaded.
+  async function showDiagram(src) {
+    try {
+      const { svg: markup } = await mermaid.render('mv' + Date.now(), src);
+      stage.innerHTML = markup;
+      svg = stage.querySelector('svg');
+      const vb = svg.viewBox.baseVal;
+      if (vb && vb.width) { natW = vb.width; natH = vb.height; }
+      else { const r = svg.getBoundingClientRect(); natW = r.width; natH = r.height; }
+      svg.removeAttribute('width');
+      svg.removeAttribute('height');
+      fit();
+    } catch (e) {
+      showError(e, src);
+    }
+  }
+
+  // --- Saving -------------------------------------------------------------
+
+  function saveSvg() {
+    const copy = svg.cloneNode(true);
+    copy.setAttribute('width', natW);
+    copy.setAttribute('height', natH);
+    copy.removeAttribute('style');
+    // The dark theme draws light text, so keep the dark background with it.
+    copy.setAttribute('style', 'background-color: #1e1e1e');
+    post({ cmd: 'svg', data: new XMLSerializer().serializeToString(copy) });
+  }
+
+  let saved = null;
+  function enterExport() {
+    saved = { scale, tx, ty };
+    // 2x for a crisp PNG, but keep under ~8000px so the snapshot stays sane.
+    scale = Math.min(2, 8000 / Math.max(natW, natH));
+    document.documentElement.classList.add('export');
+    svg.style.width = natW * scale + 'px';
+    svg.style.height = natH * scale + 'px';
+    // Wait two frames so the new layout is painted before Python snapshots it.
+    requestAnimationFrame(() => requestAnimationFrame(() => post({
+      cmd: 'png',
+      w: stage.offsetWidth, h: stage.offsetHeight,
+      docW: document.documentElement.scrollWidth,
+    })));
+  }
+
+  function exitExport() {
+    document.documentElement.classList.remove('export');
+    ({ scale, tx, ty } = saved);
+    apply();
+  }
+
+  // --- Input --------------------------------------------------------------
+
+  addEventListener('wheel', (e) => {
+    if (!svg) return;
+    e.preventDefault();
+    zoomAt(Math.exp(-e.deltaY * 0.0015), e.clientX, e.clientY);
+  }, { passive: false });
+
+  let drag = null;
+  addEventListener('mousedown', (e) => {
+    if (!svg || e.button !== 0) return;
+    drag = { x: e.clientX, y: e.clientY };
+    document.documentElement.classList.add('dragging');
+  });
+  addEventListener('mousemove', (e) => {
+    if (!drag) return;
+    tx += e.clientX - drag.x;
+    ty += e.clientY - drag.y;
+    drag = { x: e.clientX, y: e.clientY };
+    moved = true;
+    apply();
+  });
+  addEventListener('mouseup', () => {
+    drag = null;
+    document.documentElement.classList.remove('dragging');
+  });
+
+  addEventListener('resize', () => { if (svg && !moved) fit(); });
+
+  addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    const k = e.key.toLowerCase();
+    if (k === 'escape' || k === 'q') return post({ cmd: 'close' });
+    if (!svg) return;
+    const cx = innerWidth / 2, cy = innerHeight / 2;
+    if (k === '+' || k === '=') zoomAt(1.25, cx, cy);
+    else if (k === '-') zoomAt(0.8, cx, cy);
+    else if (k === '0') fit();
+    else if (k === '1') actualSize();
+    else if (k === 's') saveSvg();
+    else if (k === 'p') enterExport();
+  });
+</script>
+</body>
+</html>

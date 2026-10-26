@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""mermaid-view: show a Mermaid diagram in a minimal, view-only window.
+
+Usage: mermaid-view [FILE]     (no FILE = read the Wayland clipboard)
+
+Drag to pan, scroll to zoom, 0 = fit, 1 = actual size, S = save SVG,
+P = save PNG (to ~/Pictures/mermaid/), Q or Esc = close.
+"""
+import json
+import re
+import subprocess
+import sys
+import textwrap
+import time
+from pathlib import Path
+
+import gi
+
+gi.require_version("Gdk", "4.0")
+gi.require_version("GdkPixbuf", "2.0")
+gi.require_version("Gtk", "4.0")
+gi.require_version("WebKit", "6.0")
+from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, WebKit  # noqa: E402
+
+HERE = Path(__file__).resolve().parent
+SAVE_DIR = Path.home() / "Pictures" / "mermaid"
+BACKGROUND = "#1e1e1e"
+
+# First word of every Mermaid diagram type, used to tell Mermaid from other
+# text when the clipboard has no ```mermaid fence to go by.
+KEYWORDS = {
+    "graph", "flowchart", "sequenceDiagram", "classDiagram", "classDiagram-v2",
+    "stateDiagram", "stateDiagram-v2", "erDiagram", "journey", "gantt", "pie",
+    "quadrantChart", "requirementDiagram", "gitGraph", "C4Context",
+    "C4Container", "C4Component", "C4Dynamic", "C4Deployment", "mindmap",
+    "timeline", "zenuml", "sankey", "sankey-beta", "xychart", "xychart-beta",
+    "block", "block-beta", "packet", "packet-beta", "kanban", "architecture",
+    "architecture-beta", "radar-beta", "treemap", "treemap-beta",
+}
+
+FENCED = re.compile(r"^[ \t]*```[ \t]*mermaid[^\n]*\n(.*?)^[ \t]*```", re.S | re.M)
+BARE_FENCE = re.compile(r"\s*```\s*(mermaid)?\s*")
+
+
+def notify(message):
+    subprocess.run(["notify-send", "-u", "low", "Mermaid viewer", message], check=False)
+
+
+def read_clipboard():
+    try:
+        return subprocess.run(["wl-paste", "--no-newline"], capture_output=True,
+                              text=True, timeout=3).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def extract(text):
+    """Return the Mermaid source in text, or None if there isn't any."""
+    fenced = FENCED.search(text)
+    if fenced:
+        return textwrap.dedent(fenced.group(1).expandtabs(4)).strip() or None
+
+    lines = [line for line in text.splitlines() if not BARE_FENCE.fullmatch(line)]
+    body = textwrap.dedent("\n".join(lines).expandtabs(4)).strip()
+    first = next((line.strip() for line in body.splitlines() if line.strip()), "")
+    word = re.split(r"[\s:;{]", first, maxsplit=1)[0]
+    if first.startswith(("%%", "---")) or word in KEYWORDS:
+        return body
+    return None
+
+
+def title_for(source):
+    """A short window title: the diagram's own title if it has one."""
+    match = re.search(r"^\s*title:?\s+(.+)$", source, re.M)
+    line = match.group(1) if match else source.splitlines()[0]
+    return f"Mermaid — {line.strip()[:60]}"
+
+
+def save_path(ext):
+    SAVE_DIR.mkdir(parents=True, exist_ok=True)
+    return SAVE_DIR / f"mermaid-{time.strftime('%Y%m%d-%H%M%S')}.{ext}"
+
+
+class Viewer(Gtk.ApplicationWindow):
+    def __init__(self, app, source):
+        super().__init__(application=app, title=title_for(source))
+        self.set_default_size(1400, 900)
+        self.source = source
+
+        content = WebKit.UserContentManager()
+        content.register_script_message_handler("mv", None)
+        content.connect("script-message-received::mv", self.on_message)
+
+        self.view = WebKit.WebView(user_content_manager=content)
+        background = Gdk.RGBA()
+        background.parse(BACKGROUND)
+        self.view.set_background_color(background)
+        self.view.connect("context-menu", lambda *_: True)  # no right-click menu
+        self.view.connect("load-changed", self.on_load)
+        self.view.load_uri((HERE / "viewer.html").as_uri())
+        self.set_child(self.view)
+
+    def run_js(self, script):
+        self.view.evaluate_javascript(script, -1, None, None, None, None, None)
+
+    def on_load(self, view, event):
+        if event == WebKit.LoadEvent.FINISHED:
+            # json.dumps makes the source a safe JavaScript string literal.
+            self.run_js(f"showDiagram({json.dumps(self.source)})")
+            view.grab_focus()
+
+    def on_message(self, _content, value):
+        msg = json.loads(value.to_string())
+        if msg["cmd"] == "close":
+            self.close()
+        elif msg["cmd"] == "svg":
+            path = save_path("svg")
+            path.write_text(msg["data"])
+            notify(f"Saved {path.name}")
+        elif msg["cmd"] == "png":
+            self.view.get_snapshot(WebKit.SnapshotRegion.FULL_DOCUMENT,
+                                   WebKit.SnapshotOptions.NONE, None,
+                                   self.on_snapshot, msg)
+
+    def on_snapshot(self, view, result, msg):
+        try:
+            texture = view.get_snapshot_finish(result)
+            loader = GdkPixbuf.PixbufLoader()
+            loader.write_bytes(texture.save_to_png_bytes())
+            loader.close()
+            full = loader.get_pixbuf()
+            # The page is at least as wide as the window, so crop to the
+            # diagram. The ratio covers any HiDPI scaling of the snapshot.
+            ratio = full.get_width() / msg["docW"]
+            width = min(full.get_width(), round(msg["w"] * ratio))
+            height = min(full.get_height(), round(msg["h"] * ratio))
+            path = save_path("png")
+            full.new_subpixbuf(0, 0, width, height).savev(str(path), "png", [], [])
+            notify(f"Saved {path.name}")
+        except GLib.Error as e:
+            notify(f"PNG save failed: {e.message}")
+        finally:
+            self.run_js("exitExport()")
+
+
+def main():
+    if len(sys.argv) > 1:
+        text = Path(sys.argv[1]).read_text()
+        where = Path(sys.argv[1]).name
+    else:
+        text = read_clipboard()
+        where = "the clipboard"
+
+    source = extract(text)
+    if not source:
+        notify(f"No Mermaid diagram found on {where}")
+        return 1
+
+    GLib.set_prgname("mermaid-view")  # Wayland app-id, matched by the Hyprland rule
+    app = Gtk.Application(flags=Gio.ApplicationFlags.NON_UNIQUE)
+    app.connect("activate", lambda a: Viewer(a, source).present())
+    return app.run([])
+
+
+if __name__ == "__main__":
+    sys.exit(main())

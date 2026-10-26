@@ -1,0 +1,30 @@
+#!/bin/bash
+# Pick one of the Mermaid diagrams Claude Code has written recently (saved
+# by mermaid-capture-hook) and open it in mermaid-view.
+
+set -euo pipefail
+
+history="$HOME/.cache/mermaid-view/history"
+viewer="$(dirname "$(readlink -f "$0")")/mermaid-view"
+
+mapfile -t files < <(ls -1r "$history"/*.mmd 2>/dev/null | head -50)
+if (( ${#files[@]} == 0 )); then
+  notify-send -u low "Mermaid viewer" "No diagrams captured from Claude Code yet"
+  exit 0
+fi
+
+# One row per diagram: "<date time>  <title or first real line>", with the
+# file name as the subtext so it comes back as a stable key.
+options=()
+for file in "${files[@]}"; do
+  name=$(basename "$file" .mmd)
+  when="${name:6:2}/${name:4:2} ${name:9:2}:${name:11:2}"
+  label=$(grep -m1 -oP '^\s*title:?\s+\K.+' "$file" ||
+          grep -m1 -vE '^\s*($|%%|---)' "$file" || true)
+  label=$(sed -E 's/^\s+//' <<<"${label:0:70}")
+  options+=("$when  $label"$'\t'"$name")
+done
+
+choice=$(omarchy-menu-select "Mermaid" "${options[@]}" -- --width 700) || exit 0
+name="${choice##*$'\t'}"
+[[ -f "$history/$name.mmd" ]] && exec "$viewer" "$history/$name.mmd"

@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Claude Code Stop hook: save any Mermaid diagrams Claude just wrote.
+
+Reads the hook's JSON on stdin and saves each ```mermaid block from the turn
+that just finished to ~/.cache/mermaid-view/history/, newest 50 kept, for
+mermaid-pick to list. Never fails loudly: a hook error must not get in
+Claude's way, so everything is wrapped and it always exits 0.
+"""
+import hashlib
+import json
+import re
+import sys
+import time
+from pathlib import Path
+
+HISTORY = Path.home() / ".cache" / "mermaid-view" / "history"
+SEEN = HISTORY.parent / "seen"
+KEEP = 50
+TAIL_BYTES = 4 * 1024 * 1024
+FENCED = re.compile(r"^[ \t]*```[ \t]*mermaid[^\n]*\n(.*?)^[ \t]*```", re.S | re.M)
+
+
+def turn_texts(transcript):
+    """Claude's text from the latest turn: everything after the last prompt."""
+    with open(transcript, "rb") as f:
+        f.seek(0, 2)
+        f.seek(max(0, f.tell() - TAIL_BYTES))
+        lines = f.read().decode("utf-8", "replace").splitlines()
+
+    texts = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        content = (entry.get("message") or {}).get("content")
+        if entry.get("type") == "user":
+            # A typed prompt starts a new turn; tool results don't.
+            if isinstance(content, str) or any(
+                    c.get("type") == "text" for c in content or []):
+                texts = []
+        elif entry.get("type") == "assistant" and isinstance(content, list):
+            texts += [c["text"] for c in content if c.get("type") == "text"]
+    return texts
+
+
+def main():
+    data = json.load(sys.stdin)
+    texts = []
+    if data.get("transcript_path"):
+        try:
+            texts = turn_texts(data["transcript_path"])
+        except OSError:
+            pass
+    texts.append(data.get("last_assistant_message") or "")
+
+    blocks = [b.strip() for t in texts for b in FENCED.findall(t) if b.strip()]
+    if not blocks:
+        return
+
+    HISTORY.mkdir(parents=True, exist_ok=True)
+    seen = SEEN.read_text().split() if SEEN.exists() else []
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    for n, block in enumerate(blocks, 1):
+        digest = hashlib.sha1(block.encode()).hexdigest()[:12]
+        if digest in seen:
+            continue
+        seen.append(digest)
+        (HISTORY / f"{stamp}-{n}.mmd").write_text(block + "\n")
+
+    SEEN.write_text("\n".join(seen[-500:]) + "\n")
+    for old in sorted(HISTORY.glob("*.mmd"))[:-KEEP]:
+        old.unlink()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:  # noqa: BLE001 - never let a hook failure reach Claude
+        pass
+    sys.exit(0)
