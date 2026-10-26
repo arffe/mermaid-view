@@ -262,10 +262,28 @@ class Viewer(Gtk.ApplicationWindow):
             self.run_js("exitExport()")
 
 
+USAGE = """usage: mermaid-view [FILE]
+
+Show a Mermaid diagram in a view-only window: from FILE (.mmd or Markdown
+with a ```mermaid block), else from the clipboard, else from the last
+highlighted text.
+
+Keys: drag to pan, wheel or +/- to zoom, 0 fit, 1 actual size,
+      S save SVG, P save PNG (to ~/Pictures/mermaid/),
+      Left/Right previous/next file in the same folder, Q or Esc close."""
+
+
 def main():
+    if len(sys.argv) > 2 or sys.argv[1:] in (["-h"], ["--help"]):
+        print(USAGE)
+        return 0 if len(sys.argv) == 2 else 2
     if len(sys.argv) > 1:
         path, origin = Path(sys.argv[1]).resolve(), None
-        sources = extract(path.read_text())
+        try:
+            sources = extract(path.read_text())
+        except (OSError, UnicodeDecodeError) as e:
+            print(f"mermaid-view: {e}", file=sys.stderr)
+            return 1
         where = path.name
     else:
         # The clipboard first; if it has no Mermaid, the highlighted text.

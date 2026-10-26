@@ -1,0 +1,17 @@
+classDiagram
+  class Viewer {
+    +str source
+    +dict theme
+    +on_load()
+    +on_message()
+  }
+  class Page {
+    +showDiagram(src, theme)
+    +fit()
+    +zoomAt(f, x, y)
+  }
+  class CaptureHook {
+    +main()
+  }
+  Viewer --> Page : loads
+  CaptureHook ..> Viewer : saves files for

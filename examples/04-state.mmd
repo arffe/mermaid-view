@@ -1,0 +1,9 @@
+stateDiagram-v2
+  [*] --> Idle
+  Idle --> Rendering : key pressed
+  Rendering --> Showing : ok
+  Rendering --> Error : bad syntax
+  Showing --> Saving : S or P
+  Saving --> Showing
+  Showing --> [*] : Q or Esc
+  Error --> [*] : Q or Esc

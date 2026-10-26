@@ -1,0 +1,16 @@
+sequenceDiagram
+  autonumber
+  actor You
+  participant V as Viewer
+  participant M as Mermaid
+  You->>V: SUPER+CTRL+M
+  V->>V: Read clipboard
+  V->>M: render(source)
+  alt valid diagram
+    M-->>V: SVG
+    V-->>You: Show window
+  else syntax error
+    M-->>V: Error
+    V-->>You: Show error text
+  end
+  Note over You,V: Press S or P to save

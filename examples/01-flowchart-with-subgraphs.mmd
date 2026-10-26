@@ -1,0 +1,18 @@
+---
+title: How mermaid-view works
+---
+flowchart LR
+  subgraph Copy["You copy or highlight"]
+    T[Text with a diagram]
+  end
+  subgraph Viewer["mermaid-view"]
+    X[Find the diagram] --> R[Mermaid draws it]
+    R --> W[Window: zoom and pan]
+  end
+  subgraph Save["Optional"]
+    S[SVG]
+    P[PNG]
+  end
+  T --> X
+  W -->|S| S
+  W -->|P| P

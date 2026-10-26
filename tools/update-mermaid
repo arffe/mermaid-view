@@ -1,0 +1,34 @@
+#!/bin/bash
+# Replace vendor/mermaid.min.js with another Mermaid release from npm (via
+# jsDelivr) and record its version and checksum in vendor/README.md.
+#   tools/update-mermaid 11.13.0
+
+set -euo pipefail
+
+version="${1:?usage: tools/update-mermaid <version>, e.g. 11.13.0}"
+root="$(cd "$(dirname "$0")/.." && pwd)"
+url="https://cdn.jsdelivr.net/npm/mermaid@$version/dist/mermaid.min.js"
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+
+curl -fsSL "$url" -o "$tmp"
+# viewer.html loads it with a plain <script> tag, which needs the build that
+# sets the global "mermaid" (not the ES-module build).
+if ! tail -c 300 "$tmp" | grep -q 'globalThis\["mermaid"\]'; then
+  echo "update-mermaid: $url doesn't look like the browser build; not replacing" >&2
+  exit 1
+fi
+
+sum="$(sha256sum "$tmp" | cut -d' ' -f1)"
+install -m 644 "$tmp" "$root/vendor/mermaid.min.js"
+sed -i -E \
+  -e "s/^(\| Version \| ).*/\1$version |/" \
+  -e "s#^(\\| Source \\| ).*#\\1$url |#" \
+  -e "s/^(\| SHA-256 \| ).*/\1\`$sum\` |/" \
+  "$root/vendor/README.md"
+sed -i -E "s/Mermaid\]\(https:\/\/github.com\/mermaid-js\/mermaid\) [0-9.]+/Mermaid](https:\/\/github.com\/mermaid-js\/mermaid) $version/" \
+  "$root/THIRD_PARTY_NOTICES.md"
+
+echo "Mermaid $version installed (sha256 $sum)."
+echo "Check the bundled-library table in THIRD_PARTY_NOTICES.md against the"
+echo "'Bundled license information' comment at the end of the new file."
