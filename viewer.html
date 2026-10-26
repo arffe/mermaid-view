@@ -8,6 +8,11 @@
                font: 14px system-ui, sans-serif; user-select: none; }
   #stage { position: absolute; left: 0; top: 0; cursor: grab; }
   #stage svg { display: block; max-width: none !important; }
+  /* Mermaid wraps subgraph titles at a fixed 200px (they ignore
+     wrappingWidth) but leaves room for only one line, so the rest hides
+     behind the first node. Lifting the cap while Mermaid measures keeps the
+     title on one line and widens the subgraph to fit. */
+  .cluster-label foreignObject > div { max-width: none !important; }
   html.dragging #stage { cursor: grabbing; }
   #err { display: none; padding: 24px; height: 100%; box-sizing: border-box; overflow: auto; user-select: text; }
   #err h2 { color: #f38ba8; margin-top: 0; }
@@ -93,6 +98,9 @@
       else { const r = svg.getBoundingClientRect(); natW = r.width; natH = r.height; }
       svg.removeAttribute('width');
       svg.removeAttribute('height');
+      // Same fix inline, so a saved SVG matches without the page's CSS.
+      for (const div of svg.querySelectorAll('.cluster-label foreignObject > div'))
+        div.style.maxWidth = 'none';
       fit();
     } catch (e) {
       showError(e, src);
