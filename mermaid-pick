@@ -22,7 +22,9 @@ for file in "${files[@]}"; do
   label=$(grep -m1 -oP '^\s*title:?\s+\K.+' "$file" ||
           grep -m1 -vE '^\s*($|%%|---)' "$file" || true)
   label=$(sed -E 's/^\s+//' <<<"${label:0:70}")
-  options+=("$when  $label"$'\t'"$name")
+  # Three tab-separated parts (icon, label, subtext): with only two the menu
+  # reads the first as the icon. The icon is left empty.
+  options+=($'\t'"$when  $label"$'\t'"$name")
 done
 
 choice=$(omarchy-menu-select "Mermaid" "${options[@]}" -- --width 700) || exit 0
