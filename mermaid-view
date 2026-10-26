@@ -63,27 +63,51 @@ FENCED = re.compile(r"^[ \t]*```[ \t]*mermaid[^\n]*\n(.*?)^[ \t]*```", re.S | re
 BARE_FENCE = re.compile(r"\s*```\s*(mermaid)?\s*")
 
 
-def read_clipboard():
+def read_clipboard(primary=False):
+    """The clipboard, or with primary=True the last highlighted text."""
+    command = ["wl-paste", "--no-newline"] + (["--primary"] if primary else [])
     try:
-        return subprocess.run(["wl-paste", "--no-newline"], capture_output=True,
-                              text=True, timeout=3).stdout
+        return subprocess.run(command, capture_output=True, text=True, timeout=3).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
 
 
+# What may follow the keyword on a diagram's first line. Anything else
+# (e.g. "timeline of events is below") is a sentence, not a diagram.
+HEADER_TAIL = {
+    "graph": r"(TB|TD|BT|RL|LR)?", "flowchart": r"(TB|TD|BT|RL|LR)?",
+    "pie": r"(showData)?\s*(title\s.*)?", "gitGraph": r"(TB|BT|LR)?\s*:?",
+    "xychart": r"(horizontal|vertical)?", "xychart-beta": r"(horizontal|vertical)?",
+}
+
+
+def starts_diagram(line):
+    """Whether line could be the first line of a diagram: a front-matter
+    fence, a %% directive, or a diagram keyword with only what that keyword
+    takes after it."""
+    line = line.strip()
+    if line == "---" or line.startswith("%%"):
+        return True
+    word, _, tail = line.partition(" ")
+    tail = re.sub(r"\s*(%%.*)?$", "", tail.strip()).rstrip(";")
+    return word in KEYWORDS and re.fullmatch(HEADER_TAIL.get(word, ""), tail.strip()) is not None
+
+
 def extract(text):
-    """Return the Mermaid source in text, or None if there isn't any."""
+    """Possible Mermaid sources in text, best first; empty if there are none.
+
+    A ```mermaid block wins outright. Otherwise each line that looks like
+    the start of a diagram begins a candidate running to the end of the
+    text, so prose before the diagram is skipped. Prose after it is trimmed
+    by the page, which asks Mermaid itself how much of the text parses."""
     fenced = FENCED.search(text)
     if fenced:
-        return textwrap.dedent(fenced.group(1).expandtabs(4)).strip() or None
+        source = textwrap.dedent(fenced.group(1).expandtabs(4)).strip()
+        return [source] if source else []
 
-    lines = [line for line in text.splitlines() if not BARE_FENCE.fullmatch(line)]
-    body = textwrap.dedent("\n".join(lines).expandtabs(4)).strip()
-    first = next((line.strip() for line in body.splitlines() if line.strip()), "")
-    word = re.split(r"[\s:;{]", first, maxsplit=1)[0]
-    if first.startswith(("%%", "---")) or word in KEYWORDS:
-        return body
-    return None
+    lines = [line for line in text.expandtabs(4).splitlines() if not BARE_FENCE.fullmatch(line)]
+    starts = [i for i, line in enumerate(lines) if starts_diagram(line)]
+    return [textwrap.dedent("\n".join(lines[i:])).strip() for i in starts[:20]]
 
 
 def omarchy_theme():
@@ -136,11 +160,13 @@ def save_path(ext):
 
 
 class Viewer(Gtk.ApplicationWindow):
-    def __init__(self, app, source, path=None):
+    def __init__(self, app, sources, path=None, origin=None):
         super().__init__(application=app)
         self.set_default_size(1400, 900)
-        self.source = source
-        self.path = path  # None when showing the clipboard
+        self.sources = sources  # candidates from extract()
+        self.path = path  # None when showing the clipboard or highlight
+        self.origin = origin  # "clipboard" or "highlighted text"
+        self.opened = time.strftime("%H:%M")
         self.theme = omarchy_theme()
 
         content = WebKit.UserContentManager()
@@ -165,18 +191,19 @@ class Viewer(Gtk.ApplicationWindow):
             view.grab_focus()
 
     def show(self):
-        """Draw self.source, with the info label for the top-left corner."""
-        label = label_for(self.source)
+        """Draw the diagram, with the info label for the top-left corner. The
+        page picks the candidate that parses and adds its title to the label."""
+        candidates = [{"src": src, "label": label_for(src)} for src in self.sources]
         if self.path:
             files = siblings(self.path)
             where = files.index(self.path) + 1 if self.path in files else 0
-            info = {"label": f"{when_for(self.path)}  {label}", "detail": self.path.name,
+            info = {"when": when_for(self.path), "detail": self.path.name,
                     "pos": f"{where} of {len(files)}" if where else ""}
         else:
-            info = {"label": f"Clipboard  {label}", "detail": "", "pos": ""}
-        self.set_title(f"Mermaid — {label[:60]}")
+            info = {"when": "", "detail": f"From {self.origin} · {self.opened}", "pos": ""}
+        self.set_title(f"Mermaid — {candidates[0]['label'][:60]}")
         # json.dumps makes each value a safe JavaScript literal.
-        self.run_js(f"showDiagram({json.dumps(self.source)}, {json.dumps(self.theme)},"
+        self.run_js(f"showDiagram({json.dumps(candidates)}, {json.dumps(self.theme)},"
                     f" {json.dumps(info)})")
 
     def step(self, direction):
@@ -189,11 +216,11 @@ class Viewer(Gtk.ApplicationWindow):
         while 0 <= i + direction < len(files):
             i += direction
             try:
-                source = extract(files[i].read_text())
+                sources = extract(files[i].read_text())
             except OSError:
                 continue
-            if source:
-                self.path, self.source = files[i], source
+            if sources:
+                self.path, self.sources = files[i], sources
                 self.show()
                 return
 
@@ -201,6 +228,8 @@ class Viewer(Gtk.ApplicationWindow):
         msg = json.loads(value.to_string())
         if msg["cmd"] == "close":
             self.close()
+        elif msg["cmd"] == "shown":
+            self.set_title(f"Mermaid — {msg['label'][:60]}")
         elif msg["cmd"] == "step":
             self.step(msg["dir"])
         elif msg["cmd"] == "svg":
@@ -235,22 +264,26 @@ class Viewer(Gtk.ApplicationWindow):
 
 def main():
     if len(sys.argv) > 1:
-        path = Path(sys.argv[1]).resolve()
-        text = path.read_text()
+        path, origin = Path(sys.argv[1]).resolve(), None
+        sources = extract(path.read_text())
         where = path.name
     else:
+        # The clipboard first; if it has no Mermaid, the highlighted text.
         path = None
-        text = read_clipboard()
-        where = "the clipboard"
+        origin = "clipboard"
+        sources = extract(read_clipboard())
+        if not sources:
+            origin = "highlighted text"
+            sources = extract(read_clipboard(primary=True))
+        where = "the clipboard or highlighted text"
 
-    source = extract(text)
-    if not source:
+    if not sources:
         notify(f"No Mermaid diagram found on {where}")
         return 1
 
     GLib.set_prgname("mermaid-view")  # Wayland app-id, matched by the Hyprland rule
     app = Gtk.Application(flags=Gio.ApplicationFlags.NON_UNIQUE)
-    app.connect("activate", lambda a: Viewer(a, source, path).present())
+    app.connect("activate", lambda a: Viewer(a, sources, path, origin).present())
     return app.run([])
 
 

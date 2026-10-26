@@ -26,7 +26,7 @@
   #info:empty { display: none; }
   #info .detail { opacity: 0.6; font-size: 11px; margin-top: 2px; }
   html.export #info { display: none; }
-  #err { display: none; padding: 24px; height: 100%; box-sizing: border-box; overflow: auto; user-select: text; }
+  #err { display: none; padding: 72px 24px 24px;  /* top clears the info label */ height: 100%; box-sizing: border-box; overflow: auto; user-select: text; }
   #err h2 { color: var(--red); margin-top: 0; }
   #err pre { white-space: pre-wrap; font: 13px monospace; }
   #err pre.src { opacity: 0.6; border-top: 1px solid var(--dot); padding-top: 12px; }
@@ -187,21 +187,54 @@
     err.replaceChildren(h, msg, code);
   }
 
-  function showInfo(about) {
+  function showInfo(about, title) {
     if (!about) return info.replaceChildren();
     const label = document.createElement('div');
-    label.textContent = about.label;
+    label.textContent = [about.when, title].filter(Boolean).join('  ');
     const detail = document.createElement('div');
     detail.className = 'detail';
     detail.textContent = [about.detail, about.pos].filter(Boolean).join('  ·  ');
     info.replaceChildren(label, ...(detail.textContent ? [detail] : []));
   }
 
-  // Called from Python once the page has loaded.
-  // Also called again when stepping to another diagram with the arrow keys.
-  async function showDiagram(src, theme, about) {
+  function dedent(text) {
+    const lines = text.split('\n');
+    const indents = lines.filter(l => l.trim()).map(l => l.match(/^ */)[0].length);
+    const cut = Math.min(...indents, Infinity);
+    return lines.map(l => l.slice(cut)).join('\n');
+  }
+
+  // The first candidate that Mermaid accepts, whole or cut short at a blank
+  // line (prose after a diagram follows a blank line). Cutting anywhere else
+  // could turn a broken diagram into a smaller one that parses, hiding the
+  // error. Null if none parse; .dropped counts the lines left off.
+  async function firstThatParses(candidates) {
+    for (const c of candidates) {
+      const lines = c.src.split('\n');
+      for (let n = lines.length; n > 0; n--) {
+        if (n < lines.length && lines[n].trim()) continue;
+        const src = dedent(lines.slice(0, n).join('\n')).trim();
+        try {
+          await mermaid.parse(src);
+          const dropped = lines.slice(n).filter(l => l.trim()).length;
+          return { ...c, src, dropped };
+        } catch (e) { /* try the next blank line up */ }
+      }
+    }
+    return null;
+  }
+
+  // Called from Python once the page has loaded, with the possible sources
+  // ({src, label}) best first. Also called again when stepping to another
+  // diagram with the arrow keys.
+  async function showDiagram(candidates, theme, about) {
     applyTheme(theme);
-    showInfo(about);
+    const chosen = (await firstThatParses(candidates)) || candidates[0];
+    const src = chosen.src;
+    const skipped = chosen.dropped
+      ? `${chosen.dropped} line${chosen.dropped > 1 ? 's' : ''} after the diagram ignored` : '';
+    showInfo({ ...about, pos: [about.pos, skipped].filter(Boolean).join('  ·  ') }, chosen.label);
+    post({ cmd: 'shown', label: chosen.label });
     svg = null;
     stage.replaceChildren();
     err.style.display = 'none';
