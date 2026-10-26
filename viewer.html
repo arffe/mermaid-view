@@ -4,8 +4,13 @@
 <meta charset="utf-8">
 <title>Mermaid</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #1e1e1e; color: #ddd;
+  /* --bg/--fg/--dot/--red are replaced by the Omarchy theme in applyTheme(). */
+  :root { --bg: #1e1e1e; --fg: #ddd; --dot: #ffffff14; --red: #f38ba8; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background-color: var(--bg); color: var(--fg);
                font: 14px system-ui, sans-serif; user-select: none; }
+  /* Faint dot grid; apply() moves it with the diagram when panning. */
+  body { background-image: radial-gradient(var(--dot) 1px, transparent 1.5px); background-size: 24px 24px; }
+  html.export body { background-image: none; }
   #stage { position: absolute; left: 0; top: 0; cursor: grab; }
   #stage svg { display: block; max-width: none !important; }
   /* Mermaid wraps subgraph titles at a fixed 200px (they ignore
@@ -15,9 +20,9 @@
   .cluster-label foreignObject > div { max-width: none !important; }
   html.dragging #stage { cursor: grabbing; }
   #err { display: none; padding: 24px; height: 100%; box-sizing: border-box; overflow: auto; user-select: text; }
-  #err h2 { color: #f38ba8; margin-top: 0; }
+  #err h2 { color: var(--red); margin-top: 0; }
   #err pre { white-space: pre-wrap; font: 13px monospace; }
-  #err pre.src { color: #999; border-top: 1px solid #444; padding-top: 12px; }
+  #err pre.src { opacity: 0.6; border-top: 1px solid var(--dot); padding-top: 12px; }
   /* PNG export: let the page grow to the diagram's size so a full-document
      snapshot captures all of it, pinned at the top-left corner. */
   html.export, html.export body { height: auto; overflow: visible; }
@@ -37,7 +42,76 @@
   let scale = 1, tx = 0, ty = 0;        // current zoom and pan offset
   let moved = false;                    // has the user zoomed/panned yet?
 
-  mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict' });
+  let accents = [];                     // subgraph border colours, in turn
+
+  // Map an Omarchy theme (colors.toml + font) onto Mermaid's 'base' theme,
+  // which is the one that accepts a custom palette. No theme = plain dark.
+  function applyTheme(theme) {
+    const config = { startOnLoad: false, securityLevel: 'strict', theme: 'dark' };
+    const c = theme && theme.colors;
+    if (c && c.background && c.foreground) {
+      const fg = c.foreground, bg = c.background;
+      const font = theme.font ? `"${theme.font}", monospace` : 'sans-serif';
+      // Brightest first: the theme's main accent is often close to its
+      // background colours, so it would barely show on a subgraph border.
+      accents = [c.cyan, c.magenta, c.orange, c.bright_yellow, c.accent, c.red, c.bright_blue]
+        .filter((v, i, all) => v && all.indexOf(v) === i);
+      const scale = {};
+      accents.forEach((v, i) => { scale['cScale' + i] = v; scale['pie' + (i + 1)] = v; });
+      Object.assign(config, {
+        theme: 'base',
+        fontFamily: font,
+        themeVariables: {
+          darkMode: c.mode !== 'light',
+          fontFamily: font,
+          background: bg,
+          mainBkg: c.dark_background || bg,
+          primaryColor: c.dark_background || bg,
+          primaryTextColor: fg,
+          primaryBorderColor: c.dark_foreground || fg,
+          secondaryColor: c.lighter_background || bg,
+          tertiaryColor: c.selection || bg,
+          nodeBorder: c.light_foreground || fg,
+          nodeTextColor: fg,
+          textColor: fg,
+          titleColor: c.bright_foreground || fg,
+          lineColor: c.dark_foreground || fg,
+          clusterBkg: c.lighter_background || bg,
+          clusterBorder: c.accent || fg,
+          edgeLabelBackground: c.darker_background || bg,
+          noteBkgColor: c.lighter_background || bg,
+          noteTextColor: fg,
+          noteBorderColor: c.accent || fg,
+          actorBkg: c.dark_background || bg,
+          actorBorder: c.accent || fg,
+          actorTextColor: fg,
+          signalColor: fg,
+          signalTextColor: fg,
+          ...scale,
+        },
+      });
+      const root = document.documentElement.style;
+      root.setProperty('--bg', bg);
+      root.setProperty('--fg', fg);
+      root.setProperty('--dot', (c.muted || fg) + '55');
+      if (c.red) root.setProperty('--red', c.red);
+    }
+    mermaid.initialize(config);
+  }
+
+  // Give each subgraph its own accent border, like Mermaid's live editor.
+  // Set inline so a saved SVG keeps the colours.
+  function colourSubgraphs() {
+    if (!accents.length) return;
+    // Mermaid lists subgraphs bottom-up, so hand out colours by position.
+    const top = (el) => el.getBoundingClientRect();
+    [...svg.querySelectorAll('g.cluster > rect')]
+      .sort((a, b) => top(a).top - top(b).top || top(a).left - top(b).left)
+      .forEach((rect, i) => {
+      rect.style.stroke = accents[i % accents.length];
+      rect.style.strokeWidth = '1.5px';
+    });
+  }
 
   // Zoom by resizing the SVG itself rather than a CSS transform, so the
   // browser redraws the vector shapes and text stays sharp at any size.
@@ -46,6 +120,7 @@
     svg.style.height = natH * scale + 'px';
     stage.style.left = tx + 'px';
     stage.style.top = ty + 'px';
+    document.body.style.backgroundPosition = `${tx}px ${ty}px`;
   }
 
   function fit() {
@@ -88,7 +163,8 @@
   }
 
   // Called from Python once the page has loaded.
-  async function showDiagram(src) {
+  async function showDiagram(src, theme) {
+    applyTheme(theme);
     try {
       const { svg: markup } = await mermaid.render('mv' + Date.now(), src);
       stage.innerHTML = markup;
@@ -101,6 +177,7 @@
       // Same fix inline, so a saved SVG matches without the page's CSS.
       for (const div of svg.querySelectorAll('.cluster-label foreignObject > div'))
         div.style.maxWidth = 'none';
+      colourSubgraphs();
       fit();
     } catch (e) {
       showError(e, src);
@@ -115,7 +192,8 @@
     copy.setAttribute('height', natH);
     copy.removeAttribute('style');
     // The dark theme draws light text, so keep the dark background with it.
-    copy.setAttribute('style', 'background-color: #1e1e1e');
+    const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    copy.setAttribute('style', `background-color: ${bg}`);
     post({ cmd: 'svg', data: new XMLSerializer().serializeToString(copy) });
   }
 

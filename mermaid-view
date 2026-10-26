@@ -12,6 +12,7 @@ import subprocess
 import sys
 import textwrap
 import time
+import tomllib
 from pathlib import Path
 
 import gi
@@ -25,6 +26,8 @@ from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, WebKit  # noqa: E402
 HERE = Path(__file__).resolve().parent
 SAVE_DIR = Path.home() / "Pictures" / "mermaid"
 BACKGROUND = "#1e1e1e"
+# Omarchy keeps the active theme here; colors.toml has the palette.
+THEME_COLORS = Path.home() / ".local/state/omarchy/current/theme/colors.toml"
 
 # First word of every Mermaid diagram type, used to tell Mermaid from other
 # text when the clipboard has no ```mermaid fence to go by.
@@ -69,6 +72,22 @@ def extract(text):
     return None
 
 
+def omarchy_theme():
+    """The current Omarchy theme's colours and font, or None to use the
+    built-in dark look."""
+    try:
+        with open(THEME_COLORS, "rb") as f:
+            colors = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    try:
+        font = subprocess.run(["omarchy", "font", "current"], capture_output=True,
+                              text=True, timeout=2).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        font = ""
+    return {"colors": colors, "font": font}
+
+
 def title_for(source):
     """A short window title: the diagram's own title if it has one."""
     match = re.search(r"^\s*title:?\s+(.+)$", source, re.M)
@@ -86,6 +105,7 @@ class Viewer(Gtk.ApplicationWindow):
         super().__init__(application=app, title=title_for(source))
         self.set_default_size(1400, 900)
         self.source = source
+        self.theme = omarchy_theme()
 
         content = WebKit.UserContentManager()
         content.register_script_message_handler("mv", None)
@@ -93,7 +113,7 @@ class Viewer(Gtk.ApplicationWindow):
 
         self.view = WebKit.WebView(user_content_manager=content)
         background = Gdk.RGBA()
-        background.parse(BACKGROUND)
+        background.parse((self.theme or {}).get("colors", {}).get("background", BACKGROUND))
         self.view.set_background_color(background)
         self.view.connect("context-menu", lambda *_: True)  # no right-click menu
         self.view.connect("load-changed", self.on_load)
@@ -106,7 +126,7 @@ class Viewer(Gtk.ApplicationWindow):
     def on_load(self, view, event):
         if event == WebKit.LoadEvent.FINISHED:
             # json.dumps makes the source a safe JavaScript string literal.
-            self.run_js(f"showDiagram({json.dumps(self.source)})")
+            self.run_js(f"showDiagram({json.dumps(self.source)}, {json.dumps(self.theme)})")
             view.grab_focus()
 
     def on_message(self, _content, value):
