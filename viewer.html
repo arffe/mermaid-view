@@ -60,6 +60,14 @@
     const c = theme && theme.colors;
     if (c && c.background && c.foreground) {
       const fg = c.foreground, bg = c.background;
+      // Light and dark themes use the same names the other way round: in a
+      // light theme dark_foreground is a pale grey and lighter_background can
+      // be a heavy grey, so pick each role's colour by mode.
+      const light = c.mode === 'light';
+      const strong = c.light_foreground || fg;
+      const boxFill = light ? bg : (c.dark_background || bg);
+      const groupFill = light ? (c.dark_background || bg) : (c.lighter_background || bg);
+      const lines = light ? strong : (c.dark_foreground || fg);
       const font = theme.font ? `"${theme.font}", monospace` : 'sans-serif';
       // Brightest first: the theme's main accent is often close to its
       // background colours, so it would barely show on a subgraph border.
@@ -71,27 +79,27 @@
         theme: 'base',
         fontFamily: font,
         themeVariables: {
-          darkMode: c.mode !== 'light',
+          darkMode: !light,
           fontFamily: font,
           background: bg,
-          mainBkg: c.dark_background || bg,
-          primaryColor: c.dark_background || bg,
+          mainBkg: boxFill,
+          primaryColor: boxFill,
           primaryTextColor: fg,
-          primaryBorderColor: c.dark_foreground || fg,
+          primaryBorderColor: lines,
           secondaryColor: c.lighter_background || bg,
           tertiaryColor: c.selection || bg,
-          nodeBorder: c.light_foreground || fg,
+          nodeBorder: strong,
           nodeTextColor: fg,
           textColor: fg,
           titleColor: c.bright_foreground || fg,
-          lineColor: c.dark_foreground || fg,
-          clusterBkg: c.lighter_background || bg,
+          lineColor: lines,
+          clusterBkg: groupFill,
           clusterBorder: c.accent || fg,
-          edgeLabelBackground: c.darker_background || bg,
-          noteBkgColor: c.lighter_background || bg,
+          edgeLabelBackground: light ? bg : (c.darker_background || bg),
+          noteBkgColor: groupFill,
           noteTextColor: fg,
           noteBorderColor: c.accent || fg,
-          actorBkg: c.dark_background || bg,
+          actorBkg: boxFill,
           actorBorder: c.accent || fg,
           actorTextColor: fg,
           signalColor: fg,

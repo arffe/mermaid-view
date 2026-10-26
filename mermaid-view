@@ -9,6 +9,7 @@ file, Left/Right step to the previous/next diagram in its folder.
 """
 import json
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -16,19 +17,35 @@ import time
 import tomllib
 from pathlib import Path
 
-import gi
 
-gi.require_version("Gdk", "4.0")
-gi.require_version("GdkPixbuf", "2.0")
-gi.require_version("Gtk", "4.0")
-gi.require_version("WebKit", "6.0")
-from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, WebKit  # noqa: E402
+def notify(message):
+    # Omarchy's own notifier matches the desktop; notify-send elsewhere.
+    sender = shutil.which("omarchy-notification-send") or "notify-send"
+    subprocess.run([sender, "-u", "low", "Mermaid viewer", message], check=False)
+
+
+# Launched from a key binding there's no terminal to show an import error,
+# so say what's missing in a notification. WebKitGTK 6 isn't part of a
+# stock Omarchy install.
+try:
+    import gi
+
+    gi.require_version("Gdk", "4.0")
+    gi.require_version("GdkPixbuf", "2.0")
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("WebKit", "6.0")
+    from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, WebKit
+except (ImportError, ValueError) as e:
+    notify(f"Missing a library ({e}). Install with: omarchy pkg add webkitgtk-6.0 python-gobject")
+    sys.exit(1)
 
 HERE = Path(__file__).resolve().parent
 SAVE_DIR = Path.home() / "Pictures" / "mermaid"
 BACKGROUND = "#1e1e1e"
-# Omarchy keeps the active theme here; colors.toml has the palette.
+# Omarchy keeps the active theme here (colors.toml has the palette). Before
+# Omarchy 4 it lived under ~/.config, so fall back to that.
 THEME_COLORS = Path.home() / ".local/state/omarchy/current/theme/colors.toml"
+LEGACY_THEME_COLORS = Path.home() / ".config/omarchy/current/theme/colors.toml"
 
 # First word of every Mermaid diagram type, used to tell Mermaid from other
 # text when the clipboard has no ```mermaid fence to go by.
@@ -44,10 +61,6 @@ KEYWORDS = {
 
 FENCED = re.compile(r"^[ \t]*```[ \t]*mermaid[^\n]*\n(.*?)^[ \t]*```", re.S | re.M)
 BARE_FENCE = re.compile(r"\s*```\s*(mermaid)?\s*")
-
-
-def notify(message):
-    subprocess.run(["notify-send", "-u", "low", "Mermaid viewer", message], check=False)
 
 
 def read_clipboard():
@@ -76,8 +89,9 @@ def extract(text):
 def omarchy_theme():
     """The current Omarchy theme's colours and font, or None to use the
     built-in dark look."""
+    path = THEME_COLORS if THEME_COLORS.exists() else LEGACY_THEME_COLORS
     try:
-        with open(THEME_COLORS, "rb") as f:
+        with open(path, "rb") as f:
             colors = tomllib.load(f)
     except (OSError, tomllib.TOMLDecodeError):
         return None

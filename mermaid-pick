@@ -7,26 +7,53 @@ set -euo pipefail
 history="$HOME/.cache/mermaid-view/history"
 viewer="$(dirname "$(readlink -f "$0")")/mermaid-view"
 
+notify() {
+  # Omarchy's own notifier matches the desktop; notify-send elsewhere.
+  local sender=notify-send
+  command -v omarchy-notification-send >/dev/null && sender=omarchy-notification-send
+  "$sender" -u low "Mermaid viewer" "$1"
+}
+
 mapfile -t files < <(ls -1 "$history"/*.mmd 2>/dev/null | sort -rV | head -50)
 if (( ${#files[@]} == 0 )); then
-  notify-send -u low "Mermaid viewer" "No diagrams captured from Claude Code yet"
+  notify "No diagrams captured from Claude Code yet"
   exit 0
 fi
 
-# One row per diagram: "<date time>  <title or first real line>", with the
-# file name as the subtext so it comes back as a stable key.
-options=()
+# One row per diagram: "<date time>  <title or first real line>", plus the
+# file name, which comes back with the choice as a stable key.
+labels=() names=()
 for file in "${files[@]}"; do
   name=$(basename "$file" .mmd)
   when="${name:6:2}/${name:4:2} ${name:9:2}:${name:11:2}"
   label=$(grep -m1 -oP '^\s*title:?\s+\K.+' "$file" ||
           grep -m1 -vE '^\s*($|%%|---)' "$file" || true)
   label=$(sed -E 's/^\s+//; s/^"(.*)"$/\1/' <<<"${label:0:70}")
-  # Three tab-separated parts (icon, label, subtext): with only two the menu
-  # reads the first as the icon. The icon is left empty.
-  options+=($'\t'"$when  $label"$'\t'"$name")
+  labels+=("$when  $label")
+  names+=("$name")
 done
 
-choice=$(omarchy-menu-select "Mermaid" "${options[@]}" -- --width 700) || exit 0
-name="${choice##*$'\t'}"
+if command -v omarchy-menu-select >/dev/null; then
+  # Omarchy 4's menu. Three tab-separated parts (icon, label, subtext): with
+  # only two the menu reads the first as the icon. The icon is left empty.
+  options=()
+  for i in "${!labels[@]}"; do options+=($'\t'"${labels[i]}"$'\t'"${names[i]}"); done
+  choice=$(omarchy-menu-select "Mermaid" "${options[@]}" -- --width 700) || exit 0
+  name="${choice##*$'\t'}"
+else
+  # Older Omarchy (Walker) or another desktop: any dmenu-style picker. The
+  # file name goes last on the line, after "·", and is read back from there.
+  for menu in "walker --dmenu" "fuzzel --dmenu" "rofi -dmenu" "wofi --dmenu"; do
+    command -v "${menu%% *}" >/dev/null && break
+    menu=""
+  done
+  if [[ -z $menu ]]; then
+    notify "No menu tool found (omarchy-menu-select, walker, fuzzel, rofi or wofi)"
+    exit 1
+  fi
+  choice=$(for i in "${!labels[@]}"; do printf '%s  ·  %s\n' "${labels[i]}" "${names[i]}"; done |
+           $menu) || exit 0
+  name="${choice##*·  }"
+fi
+
 [[ -f "$history/$name.mmd" ]] && exec "$viewer" "$history/$name.mmd"
