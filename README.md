@@ -122,8 +122,8 @@ Without Omarchy the viewer uses a plain dark theme.
 
 ### Claude Code auto-capture (optional)
 
-Add a `Stop` hook to `~/.claude/settings.json` (merge it with any `hooks`
-you already have). `install.sh` prints this with your real path filled in:
+Add a `Stop` hook to `~/.claude/settings.json`, next to the other top-level
+settings. `install.sh` prints this with your real path filled in:
 
 ```json
 "hooks": {
@@ -133,8 +133,28 @@ you already have). `install.sh` prints this with your real path filled in:
     "async": true,
     "timeout": 10
   }] }]
-}
+},
 ```
+
+Watch the commas, because a mistake here can stop Claude Code reading the
+whole settings file:
+
+| Where you paste it | Comma to use |
+|---|---|
+| With more settings after it | Keep the one after the closing `}` |
+| As the last setting | Remove that one, and add one to the end of the line before |
+
+If you already have `"hooks"`, add only the `"Stop"` part inside it. If you
+already have a `"Stop"` hook too, add just this `{ "hooks": [ … ] }` entry to
+its list, with a comma between the entries.
+
+Then check the file:
+
+```bash
+python3 -m json.tool ~/.claude/settings.json >/dev/null
+```
+
+No output means it's fine. Otherwise it names the line to fix.
 
 After each reply, the hook saves any ` ```mermaid ` blocks to
 `~/.cache/mermaid-view/history/` (newest 50 kept, duplicates skipped).

@@ -83,9 +83,21 @@ Next, add these by hand (see README.md for other setups):
 
    Then check with:  hyprctl reload && hyprctl configerrors
 
-3. Optional, Claude Code auto-capture: add to "hooks" in ~/.claude/settings.json
+3. Optional, Claude Code auto-capture. In ~/.claude/settings.json, add this
+   next to the other top-level settings:
 
-   "Stop": [{ "hooks": [{ "type": "command",
-     "command": "$hook",
-     "async": true, "timeout": 10 }] }]
+   "hooks": {
+     "Stop": [{ "hooks": [{ "type": "command",
+       "command": "$hook",
+       "async": true, "timeout": 10 }] }]
+   },
+
+   Commas matter: keep the one after the closing } if more settings follow it,
+   remove it if this is the last setting, and add one to the line before if
+   you paste it at the end. If you already have "hooks", add only the "Stop"
+   part inside it (see README.md if you already have a "Stop" hook).
+
+   Then check the file:  python3 -m json.tool ~/.claude/settings.json >/dev/null
+   No output means it's fine; otherwise it names the line to fix. A mistake
+   here can stop Claude Code reading the whole settings file.
 EOF
