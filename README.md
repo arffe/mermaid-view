@@ -69,13 +69,18 @@ and two monitors at scale 1. HiDPI scaling is untested.
 ## Install
 
 ```bash
-git clone https://github.com/arffe/mermaid-view.git ~/Work/mermaid-view
-~/Work/mermaid-view/install.sh
+git clone https://github.com/arffe/mermaid-view.git
+cd mermaid-view
+./install.sh
 ```
 
-`install.sh` checks the dependencies, links `mermaid-view` and
-`mermaid-pick` into `~/.local/bin`, and prints the lines below for you to
-paste. It does not edit any config files itself.
+Clone it wherever you keep code. `install.sh` checks the dependencies, links
+`mermaid-view` and `mermaid-pick` into `~/.local/bin`, and prints the lines
+below for you to paste. It does not edit any config files itself.
+
+The links point at the cloned folder, so keep it in place. If you move it,
+run `./install.sh` again from the new location and update the hook path if
+you added the hook.
 
 ### Omarchy 4 (Hyprland Lua config)
 
@@ -118,13 +123,13 @@ Without Omarchy the viewer uses a plain dark theme.
 ### Claude Code auto-capture (optional)
 
 Add a `Stop` hook to `~/.claude/settings.json` (merge it with any `hooks`
-you already have), using the path where you cloned the repo:
+you already have). `install.sh` prints this with your real path filled in:
 
 ```json
 "hooks": {
   "Stop": [{ "hooks": [{
     "type": "command",
-    "command": "/home/YOU/Work/mermaid-view/mermaid-capture-hook",
+    "command": "/path/to/mermaid-view/mermaid-capture-hook",
     "async": true,
     "timeout": 10
   }] }]
@@ -137,6 +142,8 @@ It runs in the background and always exits successfully, so it can't slow
 down or interrupt Claude. SUPER+CTRL+SHIFT+M lists what it has saved.
 
 ### Try it
+
+From the cloned `mermaid-view` folder:
 
 ```bash
 mermaid-view examples/01-flowchart-with-subgraphs.mmd
@@ -195,8 +202,10 @@ the bundled-library table in `THIRD_PARTY_NOTICES.md` if it changed.
 
 ## Uninstall
 
+From the cloned `mermaid-view` folder:
+
 ```bash
-~/Work/mermaid-view/install.sh --uninstall
+./install.sh --uninstall
 ```
 
 removes the two links. Remove the key bindings, window rule and hook by
