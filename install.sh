@@ -55,6 +55,11 @@ for cmd in "${commands[@]}"; do
 done
 
 # --- What to add by hand ----------------------------------------------------
+# Claude Code runs the hook through a shell, so a path with spaces needs
+# quotes, written as \" inside the JSON.
+hook="$repo/mermaid-capture-hook"
+[[ $hook == *" "* ]] && hook="\\\"$hook\\\""
+
 cat <<EOF
 
 Installed. Try it: copy some Mermaid text, then run  mermaid-view
@@ -81,6 +86,6 @@ Next, add these by hand (see README.md for other setups):
 3. Optional, Claude Code auto-capture: add to "hooks" in ~/.claude/settings.json
 
    "Stop": [{ "hooks": [{ "type": "command",
-     "command": "$repo/mermaid-capture-hook",
+     "command": "$hook",
      "async": true, "timeout": 10 }] }]
 EOF
