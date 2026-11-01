@@ -107,7 +107,7 @@ def extract(text):
 
     lines = [line for line in text.expandtabs(4).splitlines() if not BARE_FENCE.fullmatch(line)]
     starts = [i for i, line in enumerate(lines) if starts_diagram(line)]
-    return [textwrap.dedent("\n".join(lines[i:])).strip() for i in starts[:20]]
+    return [textwrap.dedent("\n".join(lines[i:])).rstrip() for i in starts[:20]]
 
 
 def omarchy_theme():

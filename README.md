@@ -240,6 +240,12 @@ hand. Saved files stay in `~/.cache/mermaid-view/` and `~/Pictures/mermaid/`.
 - Prose after a diagram is only cut off at a blank line, so a sentence
   directly under the last diagram line shows as an error.
 
+## Contributing
+
+Bug reports and pull requests are welcome. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for the project's scope and how to run
+the tests.
+
 ## Licence
 
 MIT, see [`LICENSE`](LICENSE). Mermaid and the libraries it bundles are
