@@ -27,7 +27,8 @@ for file in "${files[@]}"; do
   name=$(basename "$file" .mmd)
   when="${name:6:2}/${name:4:2} ${name:9:2}:${name:11:2}"
   label=$(grep -m1 -oP '^\s*title:?\s+\K.+' "$file" ||
-          grep -m1 -vE '^\s*($|%%|---)' "$file" || true)
+          sed -E '/^\s*%%\{.*\}%%\s*$/d; /^\s*%%\{/,/\}%%\s*$/d; /^\s*---\s*$/,/^\s*---\s*$/d' "$file" |
+            grep -m1 -vE '^\s*($|%%)' || true)
   label=$(sed -E 's/^\s+//; s/^"(.*)"$/\1/' <<<"${label:0:70}")
   labels+=("$when  $label")
   names+=("$name")

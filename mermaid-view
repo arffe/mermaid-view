@@ -132,8 +132,11 @@ def label_for(source):
     match = re.search(r"^\s*title:?\s+(.+)$", source, re.M)
     if match:
         return match.group(1).strip().strip('"')[:70]
-    lines = [line.strip() for line in source.splitlines()]
-    return next((line for line in lines if line and not line.startswith(("%%", "---"))), "")[:70]
+    # Directives and front matter can span lines; neither is the diagram itself.
+    body = re.sub(r"^\s*---\s*\n.*?^\s*---\s*$", "", source, count=1, flags=re.S | re.M)
+    body = re.sub(r"%%\{.*?\}%%", "", body, flags=re.S)
+    lines = [line.strip() for line in body.splitlines()]
+    return next((line for line in lines if line and not line.startswith("%%")), "")[:70]
 
 
 def when_for(path):

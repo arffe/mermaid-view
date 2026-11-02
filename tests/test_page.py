@@ -6,8 +6,12 @@ They need a graphical session (Wayland or X11) and are skipped without one.
 import json
 import re
 import unittest
+import xml.etree.ElementTree as ET
 
 from support import ROOT, load_viewer
+
+
+SVG = "{http://www.w3.org/2000/svg}"
 
 
 def setUpModule():
@@ -63,11 +67,11 @@ class Page:
         candidates = [{"src": s, "label": mv.label_for(s)} for s in mv.extract(text)]
         return self.call(f"return await firstThatParses({json.dumps(candidates)});")
 
-    def show(self, source):
+    def show(self, source, theme=None):
         candidates = [{"src": source, "label": mv.label_for(source)}]
         about = {"when": "", "detail": "From clipboard · 12:00", "pos": ""}
         return self.call(f"""
-            await showDiagram({json.dumps(candidates)}, null, {json.dumps(about)});
+            await showDiagram({json.dumps(candidates)}, {json.dumps(theme)}, {json.dumps(about)});
             return {{
               hasSvg: !!stage.querySelector('svg'),
               error: err.style.display === 'block' ? err.textContent : null,
@@ -127,6 +131,112 @@ class Showing(unittest.TestCase):
         # after a Mermaid update, check long subgraph titles by eye.
         shown = page.show('flowchart LR\n  subgraph S["A long subgraph title"]\n    A --> B\n  end')
         self.assertEqual(shown["clusterWidths"], ["none"])
+
+
+FLOWCHART = 'flowchart LR\n  subgraph S["Group title"]\n    A[First box] -->|an edge| B[Second box]\n  end'
+JOURNEY = "journey\n  title Trip\n  section Go\n    A rather long task label to wrap: 3: Me"
+
+
+class SavedSvg(unittest.TestCase):
+    def saved(self, source):
+        page.show(source)
+        data = page.call("return svgForSaving();")
+        # Must be well-formed XML, or other apps won't open it at all.
+        return data, ET.fromstring(data)
+
+    def test_no_labels_rely_on_html(self):
+        for source in [FLOWCHART, JOURNEY]:
+            with self.subTest(source.split()[0]):
+                data, _ = self.saved(source)
+                self.assertNotIn("foreignObject", data)
+
+    def test_label_text_survives_as_svg_text(self):
+        _, root = self.saved(FLOWCHART)
+        texts = {"".join(t.itertext()) for t in root.iter(SVG + "text")}
+        self.assertLessEqual({"Group title", "First box", "Second box", "an edge"}, texts)
+
+    def test_no_label_is_left_in_a_switch(self):
+        # A <switch> draws only its first child, which lost wrapped lines.
+        data, root = self.saved(JOURNEY)
+        self.assertNotIn("<switch", data)
+        words = " ".join("".join(t.itertext()) for t in root.iter(SVG + "text"))
+        self.assertIn("task label", words)
+
+    def test_background_is_a_real_shape(self):
+        _, root = self.saved(FLOWCHART)
+        first = next(child for child in root if child.tag == SVG + "rect")
+        self.assertIn("fill:", first.get("style"))
+        self.assertEqual(first.get("width"), root.get("viewBox").split()[2])
+
+    def test_on_screen_diagram_is_unchanged(self):
+        page.show(FLOWCHART)
+        page.call("svgForSaving(); return 0;")
+        self.assertGreater(page.call("return stage.querySelectorAll('foreignObject').length;"), 0)
+
+
+# Trimmed from stock themes: a low-contrast light one, and one whose accents
+# are too dark for dark text.
+LIGHT = {"mode": "light", "background": "#faf4ed", "foreground": "#575279",
+         "dark_background": "#f2e9e1", "light_foreground": "#6e6a86", "dark_foreground": "#9893a5",
+         "cyan": "#d7827e", "magenta": "#907aa9", "accent": "#56949f"}
+DARK_ACCENTS = {"mode": "light", "background": "#ffffff", "foreground": "#000000",
+                "dark_background": "#f5f5f5", "cyan": "#3e3e3e", "magenta": "#2e2e2e"}
+MINDMAP = "mindmap\n  root((Centre))\n    One\n      Two\n    Three"
+
+
+class Themes(unittest.TestCase):
+    def theme(self, colors):
+        return {"colors": colors, "font": ""}
+
+    def label_contrast(self):
+        return page.call("""
+            const out = [];
+            for (const node of stage.querySelectorAll('[class*="section-"]')) {
+              const m = node.getAttribute('class').match(/section-(\\d+)/);
+              const label = node.querySelector('.nodeLabel');
+              if (!m || !label || !accents[m[1]]) continue;
+              const [r, g, b] = getComputedStyle(label).color.match(/\\d+/g).map(Number);
+              const hex = '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+              out.push(contrast(hex, accents[m[1]]));
+            }
+            return out;""")
+
+    def test_light_text_is_darkened_for_contrast(self):
+        page.show(FLOWCHART, self.theme(LIGHT))
+        text = page.call("return getComputedStyle(document.documentElement).getPropertyValue('--fg').trim();")
+        self.assertGreaterEqual(page.call(f"return contrast('{text}', '{LIGHT['background']}');"), 10)
+
+    def test_light_text_is_heavier(self):
+        page.show(FLOWCHART, self.theme(LIGHT))
+        weight = page.call("return getComputedStyle(stage.querySelector('.nodeLabel')).fontWeight;")
+        self.assertEqual(weight, "500")
+
+    def test_dark_theme_text_is_not_changed(self):
+        dark = {"mode": "dark", "background": "#1a1b26", "foreground": "#a9b1d6", "cyan": "#7dcfff"}
+        page.show(FLOWCHART, self.theme(dark))
+        self.assertEqual(page.call("return getComputedStyle(document.documentElement).getPropertyValue('--fg').trim();"),
+                         dark["foreground"])
+        weight = page.call("return getComputedStyle(stage.querySelector('.nodeLabel')).fontWeight;")
+        self.assertEqual(weight, "400")
+
+    def test_mind_map_labels_stay_readable_on_dark_accents(self):
+        page.show(MINDMAP, self.theme(DARK_ACCENTS))
+        contrasts = self.label_contrast()
+        self.assertTrue(contrasts)
+        self.assertGreaterEqual(min(contrasts), 4.5)
+
+
+    def test_mind_map_centre_is_readable_on_a_dark_theme(self):
+        dark = {"mode": "dark", "background": "#1a1b26", "foreground": "#a9b1d6",
+                "lighter_background": "#414868", "cyan": "#7dcfff"}
+        page.show(MINDMAP, self.theme(dark))
+        colours = page.call("""
+            const hex = (c) => '#' + c.match(/\\d+/g).slice(0, 3)
+              .map(v => Number(v).toString(16).padStart(2, '0')).join('');
+            const root = stage.querySelector('.section-root');
+            return [hex(getComputedStyle(root.querySelector('.nodeLabel')).color),
+                    hex(getComputedStyle(root.querySelector('circle, rect, path, polygon')).fill)];""")
+        self.assertGreaterEqual(page.call(f"return contrast('{colours[0]}', '{colours[1]}');"), 4.5)
 
 
 class BundledMermaid(unittest.TestCase):

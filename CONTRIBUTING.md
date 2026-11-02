@@ -45,7 +45,8 @@ config or saved diagrams. They run in about a second.
 | `tests/test_extract.py` | Finding Mermaid in copied text; clipboard, then highlight | GTK + WebKitGTK |
 | `tests/test_hook.py` | The Claude Code hook | Python only |
 | `tests/test_install.py` | `install.sh` | Bash and basic system tools |
-| `tests/test_page.py` | `viewer.html` with the real Mermaid; opens no visible window | GTK + WebKitGTK and a graphical session |
+| `tests/test_pick.py` | The labels in the `mermaid-pick` menu | Bash and basic system tools |
+| `tests/test_page.py` | `viewer.html` with the real Mermaid, including SVG saving and theme colours; opens no visible window | GTK + WebKitGTK and a graphical session |
 
 Tests are skipped if what they need isn't available, so check the summary line
 for `skipped`.
@@ -63,7 +64,10 @@ window code, run through these:
 3. `S` and `P` save files to `~/Pictures/mermaid/` that open correctly.
 4. Long subgraph titles stay on one line, and the XY chart's background
    matches the theme.
-5. On Omarchy, try one dark and one light theme.
+5. On Omarchy, try one dark and one light theme, and check the mind map and
+   Gantt examples are readable in both.
+6. Open a saved SVG in a non-browser app such as Pinta or Inkscape: all the
+   text should be there, on the theme's background.
 
 ## Updating Mermaid
 

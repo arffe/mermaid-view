@@ -87,6 +87,14 @@ class LabelFor(unittest.TestCase):
     def test_first_real_line_without_a_title(self):
         self.assertEqual(mv.label_for("%% note\nflowchart LR\n  A --> B"), "flowchart LR")
 
+    def test_multi_line_init_block_is_skipped(self):
+        source = '%%{init: {\n  "theme": "base"\n}}%%\nsequenceDiagram\n  A->>B: Hi'
+        self.assertEqual(mv.label_for(source), "sequenceDiagram")
+
+    def test_front_matter_without_a_title_is_skipped(self):
+        source = "---\nconfig:\n  look: handDrawn\n---\nflowchart LR\n  A --> B"
+        self.assertEqual(mv.label_for(source), "flowchart LR")
+
     def test_long_labels_are_cut(self):
         self.assertEqual(len(mv.label_for("flowchart LR " + "x" * 100)), 70)
 

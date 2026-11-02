@@ -24,7 +24,7 @@
           padding: 6px 10px; border-radius: 6px; font: 13px var(--font, monospace);
           background: color-mix(in srgb, var(--bg) 85%, transparent); }
   #info:empty { display: none; }
-  #info .detail { opacity: 0.6; font-size: 11px; margin-top: 2px; }
+  #info .detail { opacity: var(--detail, 0.6); font-size: 11px; margin-top: 2px; }
   html.export #info { display: none; }
   #err { display: none; padding: 72px 24px 24px;  /* top clears the info label */ height: 100%; box-sizing: border-box; overflow: auto; user-select: text; }
   #err h2 { color: var(--red); margin-top: 0; }
@@ -53,31 +53,70 @@
 
   let accents = [];                     // subgraph border colours, in turn
 
+  // Colours as [r, g, b] from #rrggbb; contrast as in the WCAG guidelines,
+  // from 1 (identical) to 21 (black on white).
+  const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  function luminance(hex) {
+    const [r, g, b] = rgb(hex).map((v) => {
+      v /= 255;
+      return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  }
+  function contrast(a, b) {
+    const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m);
+    return (x + 0.05) / (y + 0.05);
+  }
+  // The colour darkened just enough to reach a contrast against bg.
+  function darkenFor(hex, bg, target) {
+    const [r, g, b] = rgb(hex);
+    for (let k = 1; k > 0; k -= 0.02) {
+      const v = [r, g, b].map((n) => Math.round(n * k).toString(16).padStart(2, '0')).join('');
+      if (contrast('#' + v, bg) >= target) return '#' + v;
+    }
+    return '#000000';
+  }
+  const clearerOn = (fill, a, b) => (contrast(a, fill) >= contrast(b, fill) ? a : b);
+
   // Map an Omarchy theme (colors.toml + font) onto Mermaid's 'base' theme,
   // which is the one that accepts a custom palette. No theme = plain dark.
   function applyTheme(theme) {
     const config = { startOnLoad: false, securityLevel: 'strict', theme: 'dark' };
     const c = theme && theme.colors;
     if (c && c.background && c.foreground) {
-      const fg = c.foreground, bg = c.background;
       // Light and dark themes use the same names the other way round: in a
       // light theme dark_foreground is a pale grey and lighter_background can
-      // be a heavy grey, so pick each role's colour by mode.
+      // be a heavy grey, so pick each role's colour by mode. Thin dark text on
+      // a light page reads as fainter than its colour suggests, so light
+      // themes also get darker text and lines, and a heavier font.
       const light = c.mode === 'light';
-      const strong = c.light_foreground || fg;
+      const bg = c.background;
+      const fg = light ? darkenFor(c.foreground, bg, 10) : c.foreground;
+      const strong = light ? fg : (c.light_foreground || fg);
       const boxFill = light ? bg : (c.dark_background || bg);
       const groupFill = light ? (c.dark_background || bg) : (c.lighter_background || bg);
-      const lines = light ? strong : (c.dark_foreground || fg);
+      const lines = light ? fg : (c.dark_foreground || fg);
       const font = theme.font ? `"${theme.font}", monospace` : 'sans-serif';
       // Brightest first: the theme's main accent is often close to its
       // background colours, so it would barely show on a subgraph border.
       accents = [c.cyan, c.magenta, c.orange, c.bright_yellow, c.accent, c.red, c.bright_blue]
         .filter((v, i, all) => v && all.indexOf(v) === i);
       const scale = {};
-      accents.forEach((v, i) => { scale['cScale' + i] = v; scale['pie' + (i + 1)] = v; });
+      accents.forEach((v, i) => {
+        scale['cScale' + i] = v;
+        scale['cScaleLabel' + i] = clearerOn(v, fg, bg);
+        scale['pie' + (i + 1)] = v;
+      });
       Object.assign(config, {
         theme: 'base',
         fontFamily: font,
+        themeCSS: (light ? 'text, tspan, .nodeLabel, .edgeLabel, .label, span { font-weight: 500; }' : '')
+          // cScaleLabel only reaches SVG text, not the HTML labels in mind maps.
+          + accents.map((v, i) => `.section-${i} span, .section-${i} .nodeLabel { color: ${clearerOn(v, fg, bg)}; }`).join('')
+          // The centre node gets its colours separately, from Mermaid's git palette.
+          + `.section-root circle, .section-root rect, .section-root path, .section-root polygon { fill: ${boxFill}; stroke: ${lines}; stroke-width: 2px; }`
+          + `.section-root span, .section-root .nodeLabel { color: ${fg}; }`,
+        gantt: { fontSize: 14, sectionFontSize: 14, barHeight: 28, barGap: 6, leftPadding: 110 },
         themeVariables: {
           darkMode: !light,
           fontFamily: font,
@@ -119,6 +158,7 @@
       root.setProperty('--fg', fg);
       root.setProperty('--font', font);
       root.setProperty('--dot', (c.muted || fg) + '55');
+      root.setProperty('--detail', light ? '0.8' : '0.6');
       if (c.red) root.setProperty('--red', c.red);
     }
     mermaid.initialize(config);
@@ -259,15 +299,98 @@
 
   // --- Saving -------------------------------------------------------------
 
-  function saveSvg() {
+  // The text in foreignObject labels, line by line as laid out on screen.
+  function labelLines(label) {
+    const lines = [];
+    const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      for (const word of node.data.matchAll(/\S+/g)) {
+        const range = document.createRange();
+        range.setStart(node, word.index);
+        range.setEnd(node, word.index + word[0].length);
+        const r = range.getBoundingClientRect();
+        const middle = (r.top + r.bottom) / 2;
+        let line = lines.find((l) => Math.abs(l.middle - middle) < r.height / 2);
+        if (!line) lines.push(line = { middle, left: r.left, right: r.right, words: [], el: node.parentElement });
+        line.words.push(word[0]);
+        line.left = Math.min(line.left, r.left);
+        line.right = Math.max(line.right, r.right);
+      }
+    }
+    return lines;
+  }
+
+  // SVG shapes and text to stand in for one foreignObject label, in the same
+  // place. Only browsers draw the HTML inside foreignObject, so without this
+  // a saved SVG opens in other apps with its labels missing.
+  function plainLabel(label) {
+    const make = (tag) => document.createElementNS('http://www.w3.org/2000/svg', tag);
+    const box = label.getBoundingClientRect();
+    const lines = labelLines(label);
+    if (!box.width || !lines.length) return [];
+    const unit = label.width.baseVal.value / box.width;  // user units per screen px
+    const x0 = label.x.baseVal.value, y0 = label.y.baseVal.value;
+    const parts = [];
+    const painted = [...label.querySelectorAll('*')].find((el) => {
+      const b = getComputedStyle(el).backgroundColor;
+      return b && b !== 'transparent' && !/, 0\)$/.test(b);
+    });
+    if (painted) {
+      const rect = make('rect');
+      rect.setAttribute('x', x0);
+      rect.setAttribute('y', y0);
+      rect.setAttribute('width', label.width.baseVal.value);
+      rect.setAttribute('height', label.height.baseVal.value);
+      rect.setAttribute('fill', getComputedStyle(painted).backgroundColor);
+      parts.push(rect);
+    }
+    for (const line of lines) {
+      const css = getComputedStyle(line.el);
+      const centred = css.textAlign === 'center';
+      const text = make('text');
+      const across = centred ? (line.left + line.right) / 2 : line.left;
+      text.setAttribute('x', x0 + (across - box.left) * unit);
+      text.setAttribute('y', y0 + (line.middle - box.top) * unit);
+      text.setAttribute('dy', '0.35em');
+      text.setAttribute('style', [
+        `fill: ${css.color}`, `font-family: ${css.fontFamily}`, `font-size: ${css.fontSize}`,
+        `font-weight: ${css.fontWeight}`, `font-style: ${css.fontStyle}`,
+        `text-anchor: ${centred ? 'middle' : 'start'}`,
+      ].join('; '));
+      text.textContent = line.words.join(' ');
+      parts.push(text);
+    }
+    return parts;
+  }
+
+  function svgForSaving() {
     const copy = svg.cloneNode(true);
+    const labels = svg.querySelectorAll('foreignObject');
+    copy.querySelectorAll('foreignObject').forEach((label, i) => {
+      // Some labels sit in a <switch> with a fallback. A switch draws only its
+      // first child, so the plain text has to replace the whole switch.
+      const inSwitch = label.parentNode.localName === 'switch';
+      (inSwitch ? label.parentNode : label).replaceWith(...plainLabel(labels[i]));
+    });
     copy.setAttribute('width', natW);
     copy.setAttribute('height', natH);
     copy.removeAttribute('style');
     // The dark theme draws light text, so keep the dark background with it.
     const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
     copy.setAttribute('style', `background-color: ${bg}`);
-    post({ cmd: 'svg', data: new XMLSerializer().serializeToString(copy) });
+    // Other apps ignore that style, so draw the background as a shape too.
+    const backdrop = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    const vb = svg.viewBox.baseVal;
+    for (const [name, value] of [['x', vb.x], ['y', vb.y], ['width', vb.width], ['height', vb.height]])
+      backdrop.setAttribute(name, value);
+    backdrop.setAttribute('style', `fill: ${bg}; stroke: none`);
+    copy.prepend(backdrop);
+    return new XMLSerializer().serializeToString(copy);
+  }
+
+  function saveSvg() {
+    post({ cmd: 'svg', data: svgForSaving() });
   }
 
   let saved = null;

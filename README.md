@@ -171,6 +171,17 @@ mermaid-view examples/01-flowchart-with-subgraphs.mmd
 
 then press `→` to step through one example of each diagram type.
 
+To try the clipboard, copy an example's text and press the key binding:
+
+```bash
+wl-copy < examples/02-sequence.mmd
+```
+
+To try highlighting, run `cat examples/02-sequence.mmd`, select the output with
+the mouse, copy something else, then press the key binding. GitHub shows this
+README's diagram as a picture, so it has no text to select, but its copy button
+should copy the source.
+
 ## How it works
 
 ```mermaid
@@ -196,12 +207,17 @@ flowchart LR
 The drawing is done by the official Mermaid library, so diagrams look the
 same as on GitHub or in Obsidian. Zoom resizes the SVG rather than scaling a
 bitmap, so text stays sharp. PNG export uses a WebKit snapshot, because
-Mermaid's HTML labels can stop a browser canvas from exporting.
+Mermaid's HTML labels can stop a browser canvas from exporting. SVG export turns
+those labels into real SVG text, because only browsers can draw them, and adds
+a background shape, so saved files also work in apps like Inkscape or Pinta.
+Text uses your theme's font, so another machine without it will substitute one.
 
-**Theme.** Each window reads the current Omarchy theme
+**Theme.** Each window reads the current Omarchy theme when it opens, so after
+switching theme, open a new window to see it. It reads the theme
 (`~/.local/state/omarchy/current/theme/colors.toml`, or
 `~/.config/omarchy/current/…` on older versions) and font, and maps them
-onto Mermaid's `base` theme. Light themes are detected by their `mode`.
+onto Mermaid's `base` theme. Light themes are detected by their `mode`, and get darker text and lines and a
+heavier font, because thin dark text on a light page is harder to read.
 Without a theme file it falls back to Mermaid's dark theme.
 
 **Two workarounds** for Mermaid quirks live in `viewer.html`: subgraph titles
@@ -239,6 +255,9 @@ hand. Saved files stay in `~/.cache/mermaid-view/` and `~/Pictures/mermaid/`.
   first; use separate `.mmd` files to step through them.
 - Prose after a diagram is only cut off at a blank line, so a sentence
   directly under the last diagram line shows as an error.
+- The viewer draws exactly the text it's given. If labels look cut off, check
+  the copied text, as copying from a terminal can damage it. With the Claude
+  Code hook, the menu's copy comes straight from Claude's transcript.
 
 ## Contributing
 
