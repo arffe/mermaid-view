@@ -1,0 +1,41 @@
+name: Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# Read the code and nothing else, including for pull requests from strangers.
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install what the tests need
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-gi gir1.2-gtk-4.0 gir1.2-webkit-6.0 xvfb
+
+      # Ubuntu 24.04 stops WebKit's sandbox (bwrap) from starting, which crashes
+      # it. Allow it, rather than turn the sandbox off. The runner is temporary.
+      - name: Let WebKit's sandbox start
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # xvfb-run gives the page tests a virtual screen. They and the GTK tests
+      # skip themselves if something is missing, which would still count as a
+      # pass, so any skipped test fails the run here.
+      - name: Run the tests
+        shell: bash
+        run: |
+          xvfb-run -a /usr/bin/python3 -W ignore::DeprecationWarning -m unittest discover -s tests 2>&1 | tee "$RUNNER_TEMP/tests.txt"
+          if grep -q 'skipped=' "$RUNNER_TEMP/tests.txt"; then
+            echo "::error::Some tests were skipped, so they didn't run."
+            exit 1
+          fi
