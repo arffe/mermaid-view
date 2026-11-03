@@ -23,6 +23,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y python3-gi gir1.2-gtk-4.0 gir1.2-webkit-6.0 xvfb
 
+      # Ubuntu 24.04 stops WebKit's sandbox (bwrap) from starting, which crashes
+      # it. Allow it, rather than turn the sandbox off. The runner is temporary.
+      - name: Let WebKit's sandbox start
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       # xvfb-run gives the page tests a virtual screen. They and the GTK tests
       # skip themselves if something is missing, which would still count as a
       # pass, so any skipped test fails the run here.
