@@ -117,7 +117,7 @@ class Showing(unittest.TestCase):
         self.assertIsNone(shown["error"])
 
     def test_two_line_label(self):
-        lines = page.show("gantt\n  title Plan\n  section S\n  T : t1, 2026-01-01, 1d")["info"].split("\n")
+        lines = page.show("gantt\n  title Plan\n  section S\n  T : t1, 2026-01-01, 1d")["info"].splitlines()
         self.assertEqual(lines, ["Plan", "From clipboard · 12:00"])
 
     def test_broken_diagram_shows_the_error_and_source(self):
