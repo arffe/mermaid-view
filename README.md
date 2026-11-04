@@ -20,12 +20,15 @@ later.
 | Copy (or just highlight) diagram text, then **SUPER+CTRL+M** | The diagram, in a floating window |
 | **SUPER+CTRL+SHIFT+M** | A menu of diagrams Claude Code wrote recently |
 | `mermaid-view FILE` | View a `.mmd` file, or a Markdown file's first ` ```mermaid ` block |
-| Drag / scroll wheel | Pan / zoom around the pointer |
+| Drag / scroll wheel or two-finger scroll | Pan / zoom around the pointer |
 | `+` `-` | Zoom in / out |
 | `0` / `1` | Fit to window (how it opens) / actual size |
 | `S` / `P` | Save SVG / PNG (2×) to `~/Pictures/mermaid/` |
 | `←` `→` | Previous / next diagram file in the same folder |
 | `Q` or `Esc` | Close |
+
+On a touchpad, zoom with a two-finger scroll. A pinch is handled by WebKit rather
+than the viewer, and stops much sooner.
 
 The key bindings are suggestions; you add them yourself (see
 [Install](#install)).
