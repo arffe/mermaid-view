@@ -162,6 +162,15 @@ class SavedSvg(unittest.TestCase):
         words = " ".join("".join(t.itertext()) for t in root.iter(SVG + "text"))
         self.assertIn("task label", words)
 
+    def test_long_word_wraps_as_it_does_on_screen(self):
+        # Long enough to pass Mermaid's 200px limit in any font. It has no
+        # spaces, so the browser wraps it at a hyphen or slash.
+        word = "~/.cache/mermaid-view/history/and-some-more-of-the-path"
+        _, root = self.saved(f"flowchart LR\n  A[({word})]")
+        lines = ["".join(t.itertext()) for t in root.iter(SVG + "text")]
+        self.assertGreater(len(lines), 1)
+        self.assertEqual("".join(lines), word)
+
     def test_background_is_a_real_shape(self):
         _, root = self.saved(FLOWCHART)
         first = next(child for child in root if child.tag == SVG + "rect")

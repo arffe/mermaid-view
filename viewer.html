@@ -302,20 +302,41 @@
   // The text in foreignObject labels, line by line as laid out on screen.
   function labelLines(label) {
     const lines = [];
+    const range = document.createRange();
+    const measure = (node, start, end) => {
+      range.setStart(node, start);
+      range.setEnd(node, end);
+      return range.getBoundingClientRect();
+    };
+    const addToLine = (node, start, end) => {
+      const r = measure(node, start, end);
+      const middle = (r.top + r.bottom) / 2;
+      let line = lines.find((l) => Math.abs(l.middle - middle) < r.height / 2);
+      if (!line) lines.push(line = { middle, left: r.left, right: r.right, words: [], el: node.parentElement });
+      line.words.push(node.data.slice(start, end));
+      line.left = Math.min(line.left, r.left);
+      line.right = Math.max(line.right, r.right);
+    };
     const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
     while (walker.nextNode()) {
       const node = walker.currentNode;
       for (const word of node.data.matchAll(/\S+/g)) {
-        const range = document.createRange();
-        range.setStart(node, word.index);
-        range.setEnd(node, word.index + word[0].length);
-        const r = range.getBoundingClientRect();
-        const middle = (r.top + r.bottom) / 2;
-        let line = lines.find((l) => Math.abs(l.middle - middle) < r.height / 2);
-        if (!line) lines.push(line = { middle, left: r.left, right: r.right, words: [], el: node.parentElement });
-        line.words.push(word[0]);
-        line.left = Math.min(line.left, r.left);
-        line.right = Math.max(line.right, r.right);
+        // A long word can wrap too, at a hyphen or slash, so start a new piece
+        // wherever a character lands on a different line from the last one.
+        let start = word.index, at = word.index, lastMiddle = null;
+        for (const char of word[0]) {
+          const r = measure(node, at, at + char.length);
+          if (r.width) {
+            const middle = (r.top + r.bottom) / 2;
+            if (lastMiddle !== null && Math.abs(middle - lastMiddle) >= r.height / 2) {
+              addToLine(node, start, at);
+              start = at;
+            }
+            lastMiddle = middle;
+          }
+          at += char.length;
+        }
+        addToLine(node, start, at);
       }
     }
     return lines;
